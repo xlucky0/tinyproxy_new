@@ -1,0 +1,162 @@
+#!/bin/sh /etc/rc.common
+# shellcheck disable=SC2034,SC3043
+
+START=50
+USE_PROCD=1
+
+PROG=/usr/bin/tinyproxy
+CONFIG_DIR=/var/etc/tinyproxy
+USED_PORTS=" "
+
+valid_number() {
+	case "$1" in
+	'' | *[!0-9]*) return 1 ;;
+	esac
+	[ "${#1}" -le 5 ]
+}
+
+valid_address() {
+	case "$1" in
+	'' | *[!a-zA-Z0-9.:/%_-]*) return 1 ;;
+	esac
+}
+
+local_address() {
+	ip -o address show 2> /dev/null | awk -v address="$1" '
+		$3 == "inet" || $3 == "inet6" {
+		split($4, parts, "/")
+		if (parts[1] == address)
+			found = 1
+		}
+		END { exit !found }
+	'
+}
+
+log_warning() {
+	logger -t tinyproxy -p daemon.warning "$1"
+}
+
+normalize_range() {
+	local value="$1"
+	local minimum="$2"
+	local maximum="$3"
+	local fallback="$4"
+
+	if ! valid_number "$value" || [ "$value" -lt "$minimum" ] || [ "$value" -gt "$maximum" ]; then
+		log_warning "Invalid $5 for instance $6; using safe default $fallback"
+		value="$fallback"
+	fi
+	printf '%s' "$value"
+}
+
+write_address() {
+	local directive="$1"
+	local address="$2"
+	local section="$3"
+
+	if valid_address "$address" && {
+		[ "$directive" != Listen ] || local_address "$address"
+	}; then
+		printf '%s %s\n' "$directive" "$address"
+	else
+		log_warning "Ignoring invalid $directive value in instance $section"
+	fi
+}
+
+write_allow() {
+	local address="$1"
+	write_address Allow "$address" "$INSTANCE"
+}
+
+start_proxy() {
+	local section="$1"
+	local enabled port timeout max_clients listen
+	local config_file config_tmp
+
+	config_get_bool enabled "$section" enabled 0
+	[ "$enabled" -eq 1 ] || return 0
+
+	case "$section" in
+	'' | *[!a-zA-Z0-9_-]*)
+		log_warning "Ignoring instance with unsafe section name"
+		return 0
+		;;
+	esac
+
+	config_get port "$section" port 8888
+	port="$(normalize_range "$port" 1 65535 8888 port "$section")"
+	case "$USED_PORTS" in
+	*" $port "*)
+		log_warning "Port $port is already assigned; skipping instance $section"
+		return 0
+		;;
+	esac
+	USED_PORTS="${USED_PORTS}${port} "
+
+	config_get timeout "$section" timeout 600
+	timeout="$(normalize_range "$timeout" 1 86400 600 timeout "$section")"
+	config_get max_clients "$section" max_clients 100
+	max_clients="$(normalize_range "$max_clients" 1 10000 100 max_clients "$section")"
+
+	umask 027
+	mkdir -p "$CONFIG_DIR" || {
+		log_warning "Cannot create runtime config directory for instance $section"
+		return 1
+	}
+	chown root:nogroup "$CONFIG_DIR" || {
+		log_warning "Cannot set runtime config directory ownership for instance $section"
+		return 1
+	}
+	chmod 0750 "$CONFIG_DIR" || {
+		log_warning "Cannot secure runtime config directory for instance $section"
+		return 1
+	}
+	config_file="$CONFIG_DIR/$section.conf"
+	config_tmp="$config_file.tmp"
+	INSTANCE="$section"
+	config_get listen "$section" listen 127.0.0.1
+
+	{
+		printf '%s\n' 'User nobody' 'Group nogroup'
+		printf 'Port %s\n' "$port"
+		write_address Listen 127.0.0.1 "$section"
+		[ "$listen" = 127.0.0.1 ] || {
+			[ -n "$listen" ] && write_address Listen "$listen" "$section"
+		}
+		printf 'Timeout %s\nMaxClients %s\n' "$timeout" "$max_clients"
+		printf '%s\n' 'Syslog On' 'LogLevel Warning' 'ViaProxyName "tinyproxy"'
+		printf '%s\n' 'Allow 127.0.0.1' 'Allow ::1'
+		config_list_foreach "$section" allow write_allow
+		printf '%s\n' 'ConnectPort 443' 'ConnectPort 563'
+	} > "$config_tmp" || {
+		rm -f "$config_tmp"
+		log_warning "Cannot write runtime config for instance $section"
+		return 1
+	}
+	if ! chown root:nogroup "$config_tmp" || ! chmod 0640 "$config_tmp" ||
+		! mv -f "$config_tmp" "$config_file"; then
+		rm -f "$config_tmp"
+		log_warning "Cannot install protected runtime config for instance $section"
+		return 1
+	fi
+
+	procd_open_instance "$section"
+	procd_set_param command "$PROG" -c "$config_file" -d
+	procd_set_param respawn
+	procd_close_instance
+}
+
+start_service() {
+	USED_PORTS=" "
+	config_load tinyproxy
+	config_foreach start_proxy tinyproxy
+}
+
+service_triggers() {
+	procd_add_reload_trigger tinyproxy
+}
+
+reload_service() {
+	stop
+	start
+}

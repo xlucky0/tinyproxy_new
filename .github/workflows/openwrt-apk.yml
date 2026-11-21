@@ -1,0 +1,52 @@
+name: OpenWrt APK packages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: OpenWrt 25.12 - ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - x86_64-25.12.0
+          - aarch64_cortex-a53-25.12.0
+          - x86_64-SNAPSHOT
+          - aarch64_cortex-a53-SNAPSHOT
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build packages with the OpenWrt SDK
+        uses: openwrt/gh-action-sdk@v8
+        env:
+          ARCH: ${{ matrix.arch }}
+          FEEDNAME: tinyproxy-new
+          PACKAGES: tinyproxy luci-app-tinyproxy
+          NO_REFRESH_CHECK: true
+          INDEX: 1
+      - name: Collect APK packages
+        run: |
+          mkdir -p release-apk
+          while IFS= read -r -d '' package; do
+            cp "$package" "release-apk/${{ matrix.arch }}-$(basename "$package")"
+          done < <(find bin/packages -type f -name '*.apk' -print0)
+          test -n "$(find release-apk -type f -name '*.apk' -print -quit)"
+      - name: Upload packages to GitHub Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-apk/*.apk
+      - name: Upload build artifacts
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-apk-${{ matrix.arch }}
+          path: release-apk/*.apk

@@ -30,6 +30,8 @@ test: all
 .PHONY: shellcheck
 shellcheck:
 	@shellcheck `find . -name '*.sh'`
+	@shellcheck package/tinyproxy/files/tinyproxy.init \
+		package/tinyproxy/files/tinyproxy-diagnose
 
 test-wait:
 	TINYPROXY_TESTS_WAIT=yes $(MAKE) test

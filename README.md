@@ -86,10 +86,11 @@ updates those settings and regenerates runtime configuration. Run
 configs are stored in protected `/var/etc/tinyproxy/` files; the UCI settings
 remain in `/etc/config/tinyproxy`.
 
-The `OpenWrt APK packages` GitHub Actions workflow builds packages for
-OpenWrt 25.12 and the current snapshot on x86_64 and aarch64 Cortex-A53, and
-attaches them to published GitHub releases. APKs are architecture- and
-OpenWrt-version-specific; use a package built for the router's target.
+The `OpenWrt APK packages` GitHub Actions workflow discovers all published
+router SDK targets for OpenWrt 25.12 and its current snapshot, then attaches
+target-specific APKs to GitHub releases. (The Malta QEMU test target is
+excluded.) APKs are not universal: use the artifact matching your router's
+OpenWrt target and release channel.
 
 
 

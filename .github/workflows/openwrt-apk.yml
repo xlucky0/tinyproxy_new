@@ -14,17 +14,72 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: OpenWrt 25.12 - ${{ matrix.arch }}
+  discover:
+    name: Discover OpenWrt SDK targets
+    runs-on: ubuntu-latest
+    outputs:
+      stable: ${{ steps.matrix.outputs.stable }}
+      snapshot: ${{ steps.matrix.outputs.snapshot }}
+    steps:
+      - name: Discover all published 25.12 SDK images
+        id: matrix
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import urllib.parse
+          import urllib.request
+
+          scope = urllib.parse.urlencode({"scope": "repository:openwrt/sdk:pull"})
+          with urllib.request.urlopen(f"https://ghcr.io/token?{scope}", timeout=30) as response:
+              token = json.load(response)["token"]
+
+          url = "https://ghcr.io/v2/openwrt/sdk/tags/list?n=1000"
+          tags = set()
+          visited = set()
+          while url:
+              if url in visited:
+                  raise RuntimeError("SDK registry pagination loop")
+              visited.add(url)
+              request = urllib.request.Request(
+                  url, headers={"Authorization": f"Bearer {token}"}
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  tags.update(json.load(response).get("tags", []))
+                  link = response.headers.get("Link", "")
+              match = re.search(r"<([^>]+)>;\s*rel=\"next\"", link)
+              url = urllib.parse.urljoin("https://ghcr.io", match.group(1)) if match else None
+
+          targets = {
+              "stable": sorted(
+                  tag for tag in tags
+                  if tag.endswith("-openwrt-25.12") and not tag.startswith("malta-")
+              ),
+              "snapshot": sorted(
+                  tag for tag in tags
+                  if tag.endswith("-25.12-SNAPSHOT") and not tag.startswith("malta-")
+              ),
+          }
+          for name, sdk_tags in targets.items():
+              if not sdk_tags:
+                  raise RuntimeError(f"No OpenWrt {name} SDK targets were discovered")
+              if any(not re.fullmatch(r"[A-Za-z0-9_.-]+", tag) for tag in sdk_tags):
+                  raise RuntimeError(f"Unexpected SDK tag in {name} target list")
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+                  output.write(f"{name}={json.dumps(sdk_tags, separators=(',', ':'))}\n")
+              print(f"Discovered {len(sdk_tags)} {name} SDK targets")
+          PY
+
+  build-stable:
+    name: OpenWrt 25.12 - ${{ matrix.sdk }}
+    needs: discover
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      max-parallel: 8
       matrix:
-        arch:
-          - x86_64-25.12.0
-          - aarch64_cortex-a53-25.12.0
-          - x86_64-SNAPSHOT
-          - aarch64_cortex-a53-SNAPSHOT
+        sdk: ${{ fromJSON(needs.discover.outputs.stable) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,7 +87,7 @@ jobs:
       - name: Build packages with the OpenWrt SDK
         uses: openwrt/gh-action-sdk@v8
         env:
-          ARCH: ${{ matrix.arch }}
+          ARCH: ${{ matrix.sdk }}
           FEEDNAME: tinyproxy_new
           PACKAGES: tinyproxy luci-app-tinyproxy
           NO_REFRESH_CHECK: true
@@ -41,18 +96,72 @@ jobs:
         run: |
           mkdir -p release-apk
           while IFS= read -r -d '' package; do
-            cp "$package" "release-apk/${{ matrix.arch }}-$(basename "$package")"
+            cp "$package" "release-apk/${{ matrix.sdk }}-$(basename "$package")"
           done < <(find bin/packages -type f -name '*.apk' -print0)
           test -n "$(find release-apk -type f -name '*.apk' -print -quit)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-apk-${{ matrix.sdk }}
+          path: release-apk/*.apk
+          if-no-files-found: error
+          retention-days: 7
+
+  build-snapshot:
+    name: OpenWrt Snapshot - ${{ matrix.sdk }}
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        sdk: ${{ fromJSON(needs.discover.outputs.snapshot) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build packages with the OpenWrt SDK
+        uses: openwrt/gh-action-sdk@v8
+        env:
+          ARCH: ${{ matrix.sdk }}
+          FEEDNAME: tinyproxy_new
+          PACKAGES: tinyproxy luci-app-tinyproxy
+          NO_REFRESH_CHECK: true
+          INDEX: 1
+      - name: Collect APK packages
+        run: |
+          mkdir -p release-apk
+          while IFS= read -r -d '' package; do
+            cp "$package" "release-apk/${{ matrix.sdk }}-$(basename "$package")"
+          done < <(find bin/packages -type f -name '*.apk' -print0)
+          test -n "$(find release-apk -type f -name '*.apk' -print -quit)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-apk-${{ matrix.sdk }}
+          path: release-apk/*.apk
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Attach all target APKs
+    needs: [build-stable, build-snapshot]
+    if: needs.build-stable.result == 'success' && needs.build-snapshot.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all target packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: openwrt-apk-*
+          path: release-apk
+          merge-multiple: true
       - name: Upload packages to GitHub Release
         if: github.event_name == 'release' || inputs.release_tag != ''
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.release_tag || github.event.release.tag_name }}
           files: release-apk/*.apk
-      - name: Upload build artifacts
+      - name: Upload combined package artifact
         if: github.event_name == 'workflow_dispatch' && inputs.release_tag == ''
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-apk-${{ matrix.arch }}
+          name: openwrt-apk-all-targets
           path: release-apk/*.apk

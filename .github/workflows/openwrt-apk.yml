@@ -2,7 +2,7 @@ name: OpenWrt APK packages
 
 on:
   release:
-    types: [created]
+    types: [created, edited]
   workflow_dispatch:
     inputs:
       release_tag:
@@ -33,7 +33,7 @@ jobs:
         uses: openwrt/gh-action-sdk@v8
         env:
           ARCH: ${{ matrix.arch }}
-          FEEDNAME: tinyproxy-new
+          FEEDNAME: tinyproxy_new
           PACKAGES: tinyproxy luci-app-tinyproxy
           NO_REFRESH_CHECK: true
           INDEX: 1

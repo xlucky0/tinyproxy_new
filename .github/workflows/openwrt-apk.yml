@@ -4,6 +4,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: GitHub Release tag to upload APKs to
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -40,12 +45,13 @@ jobs:
           done < <(find bin/packages -type f -name '*.apk' -print0)
           test -n "$(find release-apk -type f -name '*.apk' -print -quit)"
       - name: Upload packages to GitHub Release
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || inputs.release_tag != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.release_tag || github.event.release.tag_name }}
           files: release-apk/*.apk
       - name: Upload build artifacts
-        if: github.event_name != 'release'
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag == ''
         uses: actions/upload-artifact@v4
         with:
           name: openwrt-apk-${{ matrix.arch }}

@@ -2,7 +2,7 @@ name: OpenWrt APK packages
 
 on:
   release:
-    types: [published]
+    types: [created]
   workflow_dispatch:
     inputs:
       release_tag:

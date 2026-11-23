@@ -49,13 +49,23 @@ normalize_range() {
 	printf '%s' "$value"
 }
 
+wildcard_address() {
+	case "$1" in
+	0.0.0.0 | ::) return 0 ;;
+	esac
+	return 1
+}
+
 write_address() {
 	local directive="$1"
 	local address="$2"
 	local section="$3"
 
 	if valid_address "$address" && {
-		[ "$directive" != Listen ] || local_address "$address"
+		case "$directive" in
+		Listen) wildcard_address "$address" || local_address "$address" ;;
+		Bind) local_address "$address" ;;
+		esac
 	}; then
 		printf '%s %s\n' "$directive" "$address"
 	else
@@ -70,7 +80,7 @@ write_allow() {
 
 start_proxy() {
 	local section="$1"
-	local enabled port timeout max_clients listen
+	local enabled port timeout max_clients listen bind
 	local config_file config_tmp
 
 	config_get_bool enabled "$section" enabled 0
@@ -115,14 +125,21 @@ start_proxy() {
 	config_tmp="$config_file.tmp"
 	INSTANCE="$section"
 	config_get listen "$section" listen 127.0.0.1
+	config_get bind "$section" bind
 
 	{
 		printf '%s\n' 'User nobody' 'Group nogroup'
 		printf 'Port %s\n' "$port"
-		write_address Listen 127.0.0.1 "$section"
-		[ "$listen" = 127.0.0.1 ] || {
-			[ -n "$listen" ] && write_address Listen "$listen" "$section"
-		}
+		if wildcard_address "$listen"; then
+			# a wildcard already covers loopback; a second Listen would clash
+			write_address Listen "$listen" "$section"
+		else
+			write_address Listen 127.0.0.1 "$section"
+			[ "$listen" = 127.0.0.1 ] || {
+				[ -n "$listen" ] && write_address Listen "$listen" "$section"
+			}
+		fi
+		[ -z "$bind" ] || write_address Bind "$bind" "$section"
 		printf 'Timeout %s\nMaxClients %s\n' "$timeout" "$max_clients"
 		printf '%s\n' 'Syslog On' 'LogLevel Warning' 'ViaProxyName "tinyproxy"'
 		printf '%s\n' 'Allow 127.0.0.1' 'Allow ::1'

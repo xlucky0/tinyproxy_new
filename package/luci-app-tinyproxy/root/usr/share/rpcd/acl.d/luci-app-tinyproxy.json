@@ -1,0 +1,14 @@
+{
+	"luci-app-tinyproxy": {
+		"description": "Grant access to Tinyproxy configuration and diagnostics",
+		"read": {
+			"uci": [ "tinyproxy" ]
+		},
+		"write": {
+			"uci": [ "tinyproxy" ],
+			"file": {
+				"/usr/sbin/tinyproxy-diagnose": [ "exec" ]
+			}
+		}
+	}
+}

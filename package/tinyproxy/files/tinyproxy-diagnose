@@ -63,12 +63,13 @@ set_option() {
 }
 
 check_instance() {
-	local section="$1" enabled port timeout max_clients listen
+	local section="$1" enabled port timeout max_clients listen bind
 	config_get_bool enabled "$section" enabled 0
 	config_get port "$section" port 8888
 	config_get timeout "$section" timeout 600
 	config_get max_clients "$section" max_clients 100
 	config_get listen "$section" listen 127.0.0.1
+	config_get bind "$section" bind
 	instances=$((instances + 1))
 	[ "$enabled" -eq 1 ] && active_instances=$((active_instances + 1))
 
@@ -136,7 +137,8 @@ check_instance() {
 			}
 		fi
 	fi
-	if [ -n "$listen" ] && [ "$listen" != 127.0.0.1 ] && ! local_address "$listen"; then
+	if [ -n "$listen" ] && [ "$listen" != 127.0.0.1 ] && [ "$listen" != 0.0.0.0 ] &&
+		[ "$listen" != :: ] && ! local_address "$listen"; then
 		echo "WARN: $section listen address is not assigned; runtime falls back to loopback"
 		issues=$((issues + 1))
 		if [ "$repair" -eq 1 ]; then
@@ -145,6 +147,18 @@ check_instance() {
 				repair_failed=1
 				return 1
 			}
+		fi
+	fi
+	if [ -n "$bind" ] && ! local_address "$bind"; then
+		echo "WARN: $section bind address is not assigned; runtime ignores it"
+		issues=$((issues + 1))
+		if [ "$repair" -eq 1 ]; then
+			uci -q delete "tinyproxy.$section.bind" || {
+				echo "ERROR: could not repair bind address for $section"
+				repair_failed=1
+				return 1
+			}
+			config_set "$section" bind ""
 		fi
 	fi
 	[ "$enabled" -eq 1 ] && echo "OK: $section enabled on configured port $port" ||

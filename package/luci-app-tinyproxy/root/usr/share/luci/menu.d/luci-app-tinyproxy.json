@@ -1,0 +1,30 @@
+{
+	"admin/services/tinyproxy": {
+		"title": "Tinyproxy",
+		"order": 60,
+		"action": {
+			"type": "alias",
+			"path": "admin/services/tinyproxy/instances"
+		},
+		"depends": {
+			"acl": [ "luci-app-tinyproxy" ],
+			"uci": { "tinyproxy": true }
+		}
+	},
+	"admin/services/tinyproxy/instances": {
+		"title": "Proxy instances",
+		"order": 1,
+		"action": {
+			"type": "view",
+			"path": "tinyproxy/instances"
+		}
+	},
+	"admin/services/tinyproxy/diagnostics": {
+		"title": "Diagnostics",
+		"order": 2,
+		"action": {
+			"type": "view",
+			"path": "tinyproxy/diagnostics"
+		}
+	}
+}

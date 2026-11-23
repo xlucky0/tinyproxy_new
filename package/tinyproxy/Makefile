@@ -31,8 +31,22 @@ endef
 define Package/tinyproxy/postinst
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
+	# migrate option names from the stock OpenWrt package (Port, Listen, ...)
+	# to the lowercase names used by this package; harmless if already done
+	for section in $$(uci -q show tinyproxy | sed -n "s/^tinyproxy\.\([^.=]*\)=tinyproxy$$/\1/p"); do
+		for pair in Port:port Listen:listen Bind:bind Allow:allow Timeout:timeout MaxClients:max_clients; do
+			old="$${pair%%:*}"
+			new="$${pair##*:}"
+			uci -q get "tinyproxy.$$section.$$old" >/dev/null || continue
+			uci -q get "tinyproxy.$$section.$$new" >/dev/null && continue
+			uci -q rename "tinyproxy.$$section.$$old=$$new"
+		done
+	done
+	uci -q commit tinyproxy
+	rm -f /tmp/luci-indexcache* 2>/dev/null
+	rm -rf /tmp/luci-modulecache 2>/dev/null
 	/etc/init.d/tinyproxy enable
-	/etc/init.d/tinyproxy start
+	/etc/init.d/tinyproxy restart
 }
 endef
 

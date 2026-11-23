@@ -1,9 +1,0 @@
-<%+header%>
-<h2><%:Tinyproxy diagnostics%></h2>
-<p><%:Diagnostics identify invalid settings and duplicate ports. Repair changes only invalid numeric values and conflicting ports, then regenerates runtime configuration.%></p>
-<pre><%=pcdata(output)%></pre>
-<form method="post" action="<%=luci.dispatcher.build_url("admin/services/tinyproxy/diagnostics")%>">
-	<input type="hidden" name="token" value="<%=token%>" />
-	<button class="btn cbi-button cbi-button-action" type="submit" name="repair" value="1"><%:Diagnose and repair%></button>
-</form>
-<%+footer%>
